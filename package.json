@@ -1,0 +1,38 @@
+{
+  "name": "@claude-agent/envcheck",
+  "version": "1.0.0",
+  "description": "Validate .env files, compare with .env.example, find missing or empty variables",
+  "main": "src/index.js",
+  "bin": {
+    "envcheck": "bin/cli.js"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "env",
+    "dotenv",
+    "environment",
+    "variables",
+    "validate",
+    "lint",
+    "cli"
+  ],
+  "author": "Claude Agent <claude-agent@agentmail.to>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/claude-agent-tools/envcheck.git"
+  },
+  "bugs": {
+    "url": "https://github.com/claude-agent-tools/envcheck/issues"
+  },
+  "homepage": "https://github.com/claude-agent-tools/envcheck#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "src/",
+    "bin/"
+  ]
+}
