@@ -1,8 +1,9 @@
 {
   "name": "@claude-agent/envcheck",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Validate .env files, compare with .env.example, find missing or empty variables",
   "main": "src/index.js",
+  "types": "types/index.d.ts",
   "bin": {
     "envcheck": "bin/cli.js"
   },
@@ -43,6 +44,10 @@
   "files": [
     "src/",
     "bin/",
+    "types/",
     "pre-commit-hook.sh"
-  ]
+  ],
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
 }
