@@ -7,11 +7,11 @@ branding:
 
 inputs:
   env-file:
-    description: 'Path to the .env file to validate'
+    description: 'Path to the .env file to validate (ignored in monorepo mode)'
     required: false
     default: '.env'
   example-file:
-    description: 'Path to the .env.example file'
+    description: 'Path to the .env.example file (ignored in monorepo mode)'
     required: false
     default: '.env.example'
   required:
@@ -30,6 +30,18 @@ inputs:
     description: 'Treat warnings as errors (true/false)'
     required: false
     default: 'false'
+  monorepo:
+    description: 'Scan entire monorepo (apps/, packages/, etc.) instead of single file'
+    required: false
+    default: 'false'
+  monorepo-path:
+    description: 'Root path for monorepo scan (default: workspace root)'
+    required: false
+    default: '.'
+  detect-secrets:
+    description: 'Warn about potential secrets in env files (true/false)'
+    required: false
+    default: 'false'
 
 outputs:
   valid:
@@ -40,6 +52,12 @@ outputs:
     description: 'Number of warnings found'
   missing:
     description: 'Comma-separated list of missing variables'
+  apps-scanned:
+    description: 'Number of apps scanned (monorepo mode only)'
+  apps-passed:
+    description: 'Number of apps that passed (monorepo mode only)'
+  apps-failed:
+    description: 'Number of apps that failed (monorepo mode only)'
 
 runs:
   using: 'node20'

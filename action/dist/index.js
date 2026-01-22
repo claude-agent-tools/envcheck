@@ -25653,6 +25653,192 @@ const fs = __nccwpck_require__(9896);
 const path = __nccwpck_require__(6928);
 
 /**
+ * Type validators for environment variables
+ */
+const typeValidators = {
+  url: (value) => {
+    if (!value) return { valid: true };
+    try {
+      new URL(value);
+      return { valid: true };
+    } catch {
+      return { valid: false, message: 'must be a valid URL' };
+    }
+  },
+
+  port: (value) => {
+    if (!value) return { valid: true };
+    const num = parseInt(value, 10);
+    if (isNaN(num) || num < 1 || num > 65535 || String(num) !== value) {
+      return { valid: false, message: 'must be a valid port number (1-65535)' };
+    }
+    return { valid: true };
+  },
+
+  boolean: (value) => {
+    if (!value) return { valid: true };
+    const lower = value.toLowerCase();
+    const valid = ['true', 'false', '1', '0', 'yes', 'no', 'on', 'off'].includes(lower);
+    if (!valid) {
+      return { valid: false, message: 'must be a boolean (true/false/1/0/yes/no)' };
+    }
+    return { valid: true };
+  },
+  bool: (value) => typeValidators.boolean(value),
+
+  email: (value) => {
+    if (!value) return { valid: true };
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(value)) {
+      return { valid: false, message: 'must be a valid email address' };
+    }
+    return { valid: true };
+  },
+
+  number: (value) => {
+    if (!value) return { valid: true };
+    if (isNaN(parseFloat(value))) {
+      return { valid: false, message: 'must be a number' };
+    }
+    return { valid: true };
+  },
+
+  integer: (value) => {
+    if (!value) return { valid: true };
+    const num = parseInt(value, 10);
+    if (isNaN(num) || String(num) !== value) {
+      return { valid: false, message: 'must be an integer' };
+    }
+    return { valid: true };
+  },
+  int: (value) => typeValidators.integer(value),
+
+  string: () => ({ valid: true }),
+  str: () => ({ valid: true }),
+
+  json: (value) => {
+    if (!value) return { valid: true };
+    try {
+      JSON.parse(value);
+      return { valid: true };
+    } catch {
+      return { valid: false, message: 'must be valid JSON' };
+    }
+  },
+
+  uuid: (value) => {
+    if (!value) return { valid: true };
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(value)) {
+      return { valid: false, message: 'must be a valid UUID' };
+    }
+    return { valid: true };
+  }
+};
+
+/**
+ * Secret detection patterns
+ * Each pattern has: regex, description, and optional keyPattern (for key-specific checks)
+ */
+const secretPatterns = [
+  // AWS
+  { regex: /^AKIA[0-9A-Z]{16}$/, description: 'AWS Access Key ID' },
+  { regex: /^[A-Za-z0-9/+=]{40}$/, description: 'AWS Secret Access Key', keyPattern: /aws.*secret|secret.*key/i },
+
+  // Private keys
+  { regex: /-----BEGIN (?:RSA |DSA |EC |OPENSSH |PGP )?PRIVATE KEY-----/, description: 'Private key' },
+  { regex: /-----BEGIN CERTIFICATE-----/, description: 'Certificate' },
+
+  // GitHub
+  { regex: /^ghp_[a-zA-Z0-9]{36}$/, description: 'GitHub Personal Access Token' },
+  { regex: /^gho_[a-zA-Z0-9]{36}$/, description: 'GitHub OAuth Access Token' },
+  { regex: /^ghu_[a-zA-Z0-9]{36}$/, description: 'GitHub User-to-Server Token' },
+  { regex: /^ghs_[a-zA-Z0-9]{36}$/, description: 'GitHub Server-to-Server Token' },
+  { regex: /^ghr_[a-zA-Z0-9]{36}$/, description: 'GitHub Refresh Token' },
+
+  // Slack
+  { regex: /^xox[baprs]-[0-9]{10,}-[0-9]{10,}-[a-zA-Z0-9]{24}$/, description: 'Slack Token' },
+
+  // Stripe
+  { regex: /^sk_live_[a-zA-Z0-9]{24,}$/, description: 'Stripe Live Secret Key' },
+  { regex: /^rk_live_[a-zA-Z0-9]{24,}$/, description: 'Stripe Live Restricted Key' },
+
+  // Twilio
+  { regex: /^AC[a-f0-9]{32}$/, description: 'Twilio Account SID' },
+  { regex: /^SK[a-f0-9]{32}$/, description: 'Twilio API Key' },
+
+  // SendGrid
+  { regex: /^SG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}$/, description: 'SendGrid API Key' },
+
+  // Google
+  { regex: /^AIza[0-9A-Za-z_-]{35}$/, description: 'Google API Key' },
+
+  // Generic high-entropy (likely real secrets)
+  { regex: /^[a-f0-9]{32}$/, description: 'Hex string (32 chars)', keyPattern: /api.*key|secret|token|password/i },
+  { regex: /^[a-f0-9]{64}$/, description: 'Hex string (64 chars)', keyPattern: /api.*key|secret|token|password/i },
+];
+
+/**
+ * Placeholder patterns that are NOT secrets
+ */
+const placeholderPatterns = [
+  /^your[-_]?/i,
+  /^my[-_]?/i,
+  /^xxx+$/i,
+  /^placeholder/i,
+  /^example/i,
+  /^test[-_]?/i,
+  /^dummy/i,
+  /^fake/i,
+  /^sample/i,
+  /^changeme/i,
+  /^replace[-_]?/i,
+  /^insert[-_]?/i,
+  /^todo/i,
+  /^\*+$/,
+  /^\.\.\.$/,
+];
+
+/**
+ * Check if a value looks like a placeholder
+ * @param {string} value - Value to check
+ * @returns {boolean} True if it looks like a placeholder
+ */
+function isPlaceholder(value) {
+  if (!value || value.length < 3) return true;
+  return placeholderPatterns.some(pattern => pattern.test(value));
+}
+
+/**
+ * Detect potential secrets in environment variables
+ * @param {string} key - Variable name
+ * @param {string} value - Variable value
+ * @returns {Object|null} Detection result or null if no secret detected
+ */
+function detectSecret(key, value) {
+  if (!value || isPlaceholder(value)) {
+    return null;
+  }
+
+  for (const pattern of secretPatterns) {
+    // If pattern has keyPattern, only check if key matches
+    if (pattern.keyPattern && !pattern.keyPattern.test(key)) {
+      continue;
+    }
+
+    if (pattern.regex.test(value)) {
+      return {
+        detected: true,
+        description: pattern.description,
+        message: `may contain a real ${pattern.description}`
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
  * Parse a .env file into an object
  * @param {string} content - File content
  * @returns {Object} Parsed variables
@@ -25662,18 +25848,30 @@ function parseEnv(content) {
     variables: {},
     errors: [],
     warnings: [],
-    lineInfo: {}
+    lineInfo: {},
+    typeHints: {}  // NEW: Store type hints from comments
   };
 
   const lines = content.split('\n');
+  let pendingTypeHint = null;
 
   for (let i = 0; i < lines.length; i++) {
     const lineNum = i + 1;
     const line = lines[i];
     const trimmed = line.trim();
 
-    // Skip empty lines and comments
-    if (!trimmed || trimmed.startsWith('#')) {
+    // Check for type hint in comments: # type: url OR # @type url
+    if (trimmed.startsWith('#')) {
+      const typeMatch = trimmed.match(/^#\s*(?:type:|@type)\s*(\w+)/i);
+      if (typeMatch) {
+        pendingTypeHint = typeMatch[1].toLowerCase();
+      }
+      continue;
+    }
+
+    // Skip empty lines
+    if (!trimmed) {
+      pendingTypeHint = null;
       continue;
     }
 
@@ -25723,6 +25921,12 @@ function parseEnv(content) {
 
     result.variables[key] = value;
     result.lineInfo[key] = lineNum;
+
+    // Store type hint if present
+    if (pendingTypeHint) {
+      result.typeHints[key] = pendingTypeHint;
+      pendingTypeHint = null;
+    }
   }
 
   return result;
@@ -25778,7 +25982,8 @@ function readEnvFile(filePath) {
       variables: {},
       errors: [{ message: `File not found: ${absolutePath}` }],
       warnings: [],
-      lineInfo: {}
+      lineInfo: {},
+      typeHints: {}
     };
   }
 
@@ -25852,13 +26057,27 @@ function compare(envPath, examplePath) {
 }
 
 /**
+ * Validate a value against a type
+ * @param {string} value - Value to validate
+ * @param {string} type - Type name
+ * @returns {Object} Validation result {valid, message}
+ */
+function validateType(value, type) {
+  const validator = typeValidators[type.toLowerCase()];
+  if (!validator) {
+    return { valid: true, message: `Unknown type '${type}'` };
+  }
+  return validator(value);
+}
+
+/**
  * Validate an env file
  * @param {string} filePath - Path to .env file
  * @param {Object} options - Validation options
  * @returns {Object} Validation result
  */
 function validate(filePath, options = {}) {
-  const { required = [], noEmpty = false } = options;
+  const { required = [], noEmpty = false, types = {}, validateTypes = false, detectSecrets = false } = options;
 
   const env = readEnvFile(filePath);
 
@@ -25920,6 +26139,38 @@ function validate(filePath, options = {}) {
     }
   }
 
+  // Type validation (from options.types or env.typeHints)
+  if (validateTypes || Object.keys(types).length > 0) {
+    const allTypes = { ...env.typeHints, ...types }; // options.types override hints
+    for (const [key, typeName] of Object.entries(allTypes)) {
+      if (key in env.variables && env.variables[key] !== '') {
+        const typeResult = validateType(env.variables[key], typeName);
+        if (!typeResult.valid) {
+          result.valid = false;
+          result.issues.push({
+            type: 'error',
+            line: env.lineInfo[key],
+            message: `Variable '${key}' ${typeResult.message} (got: ${env.variables[key]})`
+          });
+        }
+      }
+    }
+  }
+
+  // Secret detection
+  if (detectSecrets) {
+    for (const [key, value] of Object.entries(env.variables)) {
+      const secretResult = detectSecret(key, value);
+      if (secretResult) {
+        result.issues.push({
+          type: 'warning',
+          line: env.lineInfo[key],
+          message: `Variable '${key}' ${secretResult.message}`
+        });
+      }
+    }
+  }
+
   // Add warnings
   for (const warning of env.warnings) {
     result.issues.push({
@@ -25944,7 +26195,10 @@ function check(envPath, options = {}) {
     required = [],
     noEmpty = false,
     noExtra = false,
-    strict = false
+    strict = false,
+    types = {},
+    validateTypes = false,
+    detectSecrets = false
   } = options;
 
   const result = {
@@ -25956,8 +26210,26 @@ function check(envPath, options = {}) {
     }
   };
 
-  // First validate the env file
-  const validation = validate(envPath, { required, noEmpty });
+  // Get type hints from example file if provided
+  let exampleTypeHints = {};
+  if (examplePath) {
+    const example = readEnvFile(examplePath);
+    if (example.exists) {
+      exampleTypeHints = example.typeHints || {};
+    }
+  }
+
+  // Merge type hints: example hints < explicit types
+  const mergedTypes = { ...exampleTypeHints, ...types };
+
+  // First validate the env file (including type validation and secret detection)
+  const validation = validate(envPath, {
+    required,
+    noEmpty,
+    types: mergedTypes,
+    validateTypes: validateTypes || Object.keys(mergedTypes).length > 0,
+    detectSecrets
+  });
 
   if (!validation.valid) {
     result.valid = false;
@@ -26060,16 +26332,297 @@ function get(filePath, key) {
   return env.variables[key];
 }
 
+/**
+ * Find directories that might contain apps/packages in a monorepo
+ * @param {string} rootDir - Root directory to scan
+ * @returns {string[]} Array of directory paths
+ */
+function findMonorepoApps(rootDir) {
+  const apps = [];
+  const basePath = path.resolve(rootDir);
+
+  // Common monorepo patterns
+  const patterns = ['apps', 'packages', 'workspaces', 'services', 'libs'];
+
+  for (const pattern of patterns) {
+    const dir = path.join(basePath, pattern);
+    if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
+      // Get all subdirectories
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory() && !entry.name.startsWith('.')) {
+          apps.push(path.join(dir, entry.name));
+        }
+      }
+    }
+  }
+
+  // Also check root for .env.example (some monorepos have root-level env)
+  if (fs.existsSync(path.join(basePath, '.env.example')) ||
+      fs.existsSync(path.join(basePath, '.env'))) {
+    apps.unshift(basePath);
+  }
+
+  return apps;
+}
+
+/**
+ * Scan a monorepo for env file issues
+ * @param {string} rootDir - Root directory of monorepo
+ * @param {Object} options - Scan options
+ * @returns {Object} Monorepo scan result
+ */
+function scanMonorepo(rootDir, options = {}) {
+  const {
+    noEmpty = false,
+    noExtra = false,
+    strict = false,
+    checkConsistency = true,
+    detectSecrets = false
+  } = options;
+
+  const basePath = path.resolve(rootDir);
+  const apps = findMonorepoApps(basePath);
+
+  const result = {
+    root: basePath,
+    valid: true,
+    apps: [],
+    summary: {
+      total: apps.length,
+      passed: 0,
+      failed: 0,
+      skipped: 0,
+      errors: 0,
+      warnings: 0
+    },
+    consistency: {
+      sharedVars: {},  // Variables that appear in multiple apps
+      mismatches: []   // Variables with different types/values across apps
+    }
+  };
+
+  // Track all variables across apps for consistency checking
+  const allVars = {};  // { varName: [{ app, value, type }] }
+
+  for (const appDir of apps) {
+    const appName = path.relative(basePath, appDir) || '.';
+    const envPath = path.join(appDir, '.env');
+    const examplePath = path.join(appDir, '.env.example');
+
+    const appResult = {
+      name: appName,
+      path: appDir,
+      hasEnv: fs.existsSync(envPath),
+      hasExample: fs.existsSync(examplePath),
+      valid: true,
+      issues: [],
+      variables: []
+    };
+
+    // Skip if no example file (can't validate)
+    if (!appResult.hasExample) {
+      appResult.skipped = true;
+      appResult.reason = 'No .env.example found';
+      result.apps.push(appResult);
+      result.summary.skipped++;
+      continue;
+    }
+
+    // If no .env but has example, that's also a problem
+    if (!appResult.hasEnv) {
+      appResult.valid = false;
+      appResult.issues.push({
+        type: 'warning',
+        message: 'No .env file found (but .env.example exists)'
+      });
+    }
+
+    // Run check if both files exist
+    if (appResult.hasEnv) {
+      const checkResult = check(envPath, {
+        examplePath,
+        noEmpty,
+        noExtra,
+        strict,
+        validateTypes: true,
+        detectSecrets
+      });
+
+      appResult.valid = checkResult.valid;
+      appResult.issues = checkResult.issues;
+      appResult.variables = Object.keys(checkResult.env?.variables || {});
+
+      // Track variables for consistency check
+      if (checkConsistency && checkResult.env?.variables) {
+        const example = readEnvFile(examplePath);
+        for (const [varName, value] of Object.entries(checkResult.env.variables)) {
+          if (!allVars[varName]) {
+            allVars[varName] = [];
+          }
+          allVars[varName].push({
+            app: appName,
+            value,
+            type: example.typeHints?.[varName] || null
+          });
+        }
+      }
+    }
+
+    // Update summary
+    if (appResult.skipped) {
+      // Already counted above
+    } else if (appResult.valid) {
+      result.summary.passed++;
+    } else {
+      result.summary.failed++;
+      result.valid = false;
+    }
+
+    const errors = appResult.issues.filter(i => i.type === 'error').length;
+    const warnings = appResult.issues.filter(i => i.type === 'warning').length;
+    result.summary.errors += errors;
+    result.summary.warnings += warnings;
+
+    result.apps.push(appResult);
+  }
+
+  // Check consistency across apps
+  if (checkConsistency) {
+    for (const [varName, occurrences] of Object.entries(allVars)) {
+      if (occurrences.length > 1) {
+        result.consistency.sharedVars[varName] = occurrences.map(o => o.app);
+
+        // Check for type mismatches
+        const types = new Set(occurrences.map(o => o.type).filter(Boolean));
+        if (types.size > 1) {
+          result.consistency.mismatches.push({
+            variable: varName,
+            issue: 'type_mismatch',
+            details: occurrences.map(o => ({ app: o.app, type: o.type }))
+          });
+          result.valid = false;
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Format monorepo result for CLI output
+ * @param {Object} result - Monorepo scan result
+ * @param {Object} options - Format options
+ * @returns {string} Formatted output
+ */
+function formatMonorepoResult(result, options = {}) {
+  const { colors = true, verbose = false } = options;
+
+  const c = colors ? {
+    green: '\x1b[32m',
+    red: '\x1b[31m',
+    yellow: '\x1b[33m',
+    dim: '\x1b[2m',
+    reset: '\x1b[0m',
+    bold: '\x1b[1m'
+  } : { green: '', red: '', yellow: '', dim: '', reset: '', bold: '' };
+
+  const lines = [];
+
+  lines.push(`${c.bold}Monorepo Environment Check${c.reset}`);
+  lines.push(`Root: ${result.root}`);
+  lines.push('');
+
+  for (const app of result.apps) {
+    const icon = app.skipped ? `${c.dim}○${c.reset}` :
+                 app.valid ? `${c.green}✓${c.reset}` :
+                 `${c.red}✗${c.reset}`;
+
+    let status = '';
+    if (app.skipped) {
+      status = `${c.dim}skipped (${app.reason})${c.reset}`;
+    } else {
+      const errors = app.issues.filter(i => i.type === 'error').length;
+      const warnings = app.issues.filter(i => i.type === 'warning').length;
+
+      if (errors === 0 && warnings === 0) {
+        status = `${c.green}passed${c.reset}`;
+      } else if (errors > 0) {
+        status = `${c.red}${errors} error(s)${c.reset}`;
+        if (warnings > 0) status += `, ${c.yellow}${warnings} warning(s)${c.reset}`;
+      } else {
+        status = `${c.yellow}${warnings} warning(s)${c.reset}`;
+      }
+    }
+
+    lines.push(`${icon} ${app.name}: ${status}`);
+
+    // Show details in verbose mode
+    if (verbose && !app.skipped && app.issues.length > 0) {
+      for (const issue of app.issues) {
+        const prefix = issue.type === 'error' ? `${c.red}  ✗${c.reset}` : `${c.yellow}  !${c.reset}`;
+        lines.push(`${prefix} ${issue.message}`);
+      }
+    }
+  }
+
+  lines.push('');
+
+  // Summary
+  lines.push(`${c.bold}Summary:${c.reset} ${result.summary.total} apps scanned`);
+  if (result.summary.passed > 0) {
+    lines.push(`  ${c.green}✓${c.reset} ${result.summary.passed} passed`);
+  }
+  if (result.summary.failed > 0) {
+    lines.push(`  ${c.red}✗${c.reset} ${result.summary.failed} failed`);
+  }
+  if (result.summary.skipped > 0) {
+    lines.push(`  ${c.dim}○${c.reset} ${result.summary.skipped} skipped`);
+  }
+
+  // Consistency issues
+  if (result.consistency.mismatches.length > 0) {
+    lines.push('');
+    lines.push(`${c.yellow}Consistency Issues:${c.reset}`);
+    for (const mismatch of result.consistency.mismatches) {
+      lines.push(`  ${c.yellow}!${c.reset} ${mismatch.variable}: ${mismatch.issue}`);
+      for (const detail of mismatch.details) {
+        lines.push(`    - ${detail.app}: type=${detail.type || 'unspecified'}`);
+      }
+    }
+  }
+
+  // Final status
+  lines.push('');
+  if (result.valid) {
+    lines.push(`${c.green}✓ All checks passed${c.reset}`);
+  } else {
+    lines.push(`${c.red}✗ ${result.summary.errors} error(s), ${result.summary.warnings} warning(s)${c.reset}`);
+  }
+
+  return lines.join('\n');
+}
+
 module.exports = {
   parse: parseEnv,
   parseValue,
   readEnvFile,
   compare,
   validate,
+  validateType,
+  typeValidators,
+  detectSecret,
+  secretPatterns,
+  isPlaceholder,
   check,
   generate,
   list,
-  get
+  get,
+  // Monorepo support
+  findMonorepoApps,
+  scanMonorepo,
+  formatMonorepoResult
 };
 
 
@@ -27994,98 +28547,192 @@ const fs = __nccwpck_require__(9896);
 // Import envcheck from parent package
 const envcheck = __nccwpck_require__(2279);
 
-async function run() {
-  try {
-    // Get inputs
-    const envFile = core.getInput('env-file') || '.env';
-    const exampleFile = core.getInput('example-file') || '.env.example';
-    const requiredInput = core.getInput('required') || '';
-    const strict = core.getInput('strict') === 'true';
-    const noExtra = core.getInput('no-extra') === 'true';
-    const failOnWarning = core.getInput('fail-on-warning') === 'true';
+async function runMonorepo(workspacePath, options) {
+  const monorepoPath = core.getInput('monorepo-path') || '.';
+  const rootPath = path.resolve(workspacePath, monorepoPath);
 
-    // Parse required variables
-    const required = requiredInput
-      ? requiredInput.split(',').map(s => s.trim()).filter(Boolean)
-      : [];
+  core.info(`Scanning monorepo at ${rootPath}`);
 
-    // Resolve paths
-    const workspacePath = process.env.GITHUB_WORKSPACE || process.cwd();
-    const envPath = path.resolve(workspacePath, envFile);
-    const examplePath = path.resolve(workspacePath, exampleFile);
+  const result = envcheck.scanMonorepo(rootPath, {
+    noEmpty: options.strict,
+    noExtra: options.noExtra,
+    strict: options.strict,
+    detectSecrets: options.detectSecrets,
+    checkConsistency: true
+  });
 
-    core.info(`Checking ${envFile} against ${exampleFile}`);
+  // Set outputs
+  core.setOutput('valid', result.valid ? 'true' : 'false');
+  core.setOutput('errors', String(result.summary.errors));
+  core.setOutput('warnings', String(result.summary.warnings));
+  core.setOutput('missing', ''); // Not applicable in monorepo mode
+  core.setOutput('apps-scanned', String(result.summary.total));
+  core.setOutput('apps-passed', String(result.summary.passed));
+  core.setOutput('apps-failed', String(result.summary.failed));
 
-    // Check if env file exists
-    if (!fs.existsSync(envPath)) {
-      core.setFailed(`Environment file not found: ${envFile}`);
-      core.setOutput('valid', 'false');
-      core.setOutput('errors', '1');
-      core.setOutput('warnings', '0');
-      core.setOutput('missing', '');
-      return;
-    }
+  // Log results per app
+  core.info('');
+  core.info('=== Monorepo Environment Check ===');
 
-    // Check options
-    const options = {
-      required,
-      noEmpty: strict,
-      noExtra,
-      strict
-    };
-
-    // Add example file if it exists
-    if (fs.existsSync(examplePath)) {
-      options.examplePath = examplePath;
+  for (const app of result.apps) {
+    if (app.skipped) {
+      core.info(`○ ${app.name}: skipped (${app.reason})`);
+    } else if (app.valid) {
+      core.info(`✓ ${app.name}: passed`);
     } else {
-      core.warning(`Example file not found: ${exampleFile}`);
-    }
-
-    // Run check
-    const result = envcheck.check(envPath, options);
-
-    // Collect missing variables
-    const missing = result.comparison?.missing?.map(m => m.key) || [];
-
-    // Set outputs
-    core.setOutput('valid', result.valid ? 'true' : 'false');
-    core.setOutput('errors', String(result.summary.errors));
-    core.setOutput('warnings', String(result.summary.warnings));
-    core.setOutput('missing', missing.join(','));
-
-    // Log issues
-    for (const issue of result.issues) {
-      const message = issue.line
-        ? `Line ${issue.line}: ${issue.message}`
-        : issue.message;
-
-      if (issue.type === 'error') {
-        core.error(message);
-      } else if (issue.type === 'warning') {
-        if (failOnWarning) {
+      core.error(`✗ ${app.name}: failed`);
+      for (const issue of app.issues) {
+        const message = issue.line
+          ? `  Line ${issue.line}: ${issue.message}`
+          : `  ${issue.message}`;
+        if (issue.type === 'error') {
           core.error(message);
         } else {
           core.warning(message);
         }
       }
     }
+  }
 
-    // Summary
+  // Consistency issues
+  if (result.consistency.mismatches.length > 0) {
     core.info('');
-    core.info('=== Environment Check Summary ===');
-    core.info(`File: ${envFile}`);
-    core.info(`Errors: ${result.summary.errors}`);
-    core.info(`Warnings: ${result.summary.warnings}`);
+    core.warning('Consistency issues found:');
+    for (const mismatch of result.consistency.mismatches) {
+      core.warning(`  ${mismatch.variable}: ${mismatch.issue}`);
+    }
+  }
 
-    if (missing.length > 0) {
-      core.info(`Missing variables: ${missing.join(', ')}`);
+  // Summary
+  core.info('');
+  core.info('=== Summary ===');
+  core.info(`Apps scanned: ${result.summary.total}`);
+  core.info(`Passed: ${result.summary.passed}`);
+  core.info(`Failed: ${result.summary.failed}`);
+  core.info(`Skipped: ${result.summary.skipped}`);
+  core.info(`Total errors: ${result.summary.errors}`);
+  core.info(`Total warnings: ${result.summary.warnings}`);
+
+  return result;
+}
+
+async function runSingleFile(workspacePath, options) {
+  const envFile = core.getInput('env-file') || '.env';
+  const exampleFile = core.getInput('example-file') || '.env.example';
+
+  const envPath = path.resolve(workspacePath, envFile);
+  const examplePath = path.resolve(workspacePath, exampleFile);
+
+  core.info(`Checking ${envFile} against ${exampleFile}`);
+
+  // Check if env file exists
+  if (!fs.existsSync(envPath)) {
+    core.setFailed(`Environment file not found: ${envFile}`);
+    core.setOutput('valid', 'false');
+    core.setOutput('errors', '1');
+    core.setOutput('warnings', '0');
+    core.setOutput('missing', '');
+    return { valid: false };
+  }
+
+  // Check options
+  const checkOptions = {
+    required: options.required,
+    noEmpty: options.strict,
+    noExtra: options.noExtra,
+    strict: options.strict,
+    detectSecrets: options.detectSecrets
+  };
+
+  // Add example file if it exists
+  if (fs.existsSync(examplePath)) {
+    checkOptions.examplePath = examplePath;
+  } else {
+    core.warning(`Example file not found: ${exampleFile}`);
+  }
+
+  // Run check
+  const result = envcheck.check(envPath, checkOptions);
+
+  // Collect missing variables
+  const missing = result.comparison?.missing?.map(m => m.key) || [];
+
+  // Set outputs
+  core.setOutput('valid', result.valid ? 'true' : 'false');
+  core.setOutput('errors', String(result.summary.errors));
+  core.setOutput('warnings', String(result.summary.warnings));
+  core.setOutput('missing', missing.join(','));
+
+  // Log issues
+  for (const issue of result.issues) {
+    const message = issue.line
+      ? `Line ${issue.line}: ${issue.message}`
+      : issue.message;
+
+    if (issue.type === 'error') {
+      core.error(message);
+    } else if (issue.type === 'warning') {
+      if (options.failOnWarning) {
+        core.error(message);
+      } else {
+        core.warning(message);
+      }
+    }
+  }
+
+  // Summary
+  core.info('');
+  core.info('=== Environment Check Summary ===');
+  core.info(`File: ${envFile}`);
+  core.info(`Errors: ${result.summary.errors}`);
+  core.info(`Warnings: ${result.summary.warnings}`);
+
+  if (missing.length > 0) {
+    core.info(`Missing variables: ${missing.join(', ')}`);
+  }
+
+  return result;
+}
+
+async function run() {
+  try {
+    // Get inputs
+    const requiredInput = core.getInput('required') || '';
+    const strict = core.getInput('strict') === 'true';
+    const noExtra = core.getInput('no-extra') === 'true';
+    const failOnWarning = core.getInput('fail-on-warning') === 'true';
+    const monorepo = core.getInput('monorepo') === 'true';
+    const detectSecrets = core.getInput('detect-secrets') === 'true';
+
+    // Parse required variables
+    const required = requiredInput
+      ? requiredInput.split(',').map(s => s.trim()).filter(Boolean)
+      : [];
+
+    // Resolve workspace path
+    const workspacePath = process.env.GITHUB_WORKSPACE || process.cwd();
+
+    const options = {
+      required,
+      strict,
+      noExtra,
+      failOnWarning,
+      detectSecrets
+    };
+
+    let result;
+    if (monorepo) {
+      result = await runMonorepo(workspacePath, options);
+    } else {
+      result = await runSingleFile(workspacePath, options);
     }
 
     // Determine if we should fail
-    const shouldFail = !result.valid || (failOnWarning && result.summary.warnings > 0);
+    const shouldFail = !result.valid || (failOnWarning && (result.summary?.warnings || 0) > 0);
 
     if (shouldFail) {
-      core.setFailed(`Environment validation failed with ${result.summary.errors} error(s)`);
+      const errors = result.summary?.errors || 1;
+      core.setFailed(`Environment validation failed with ${errors} error(s)`);
     } else {
       core.info('');
       core.info('✓ Environment validation passed');

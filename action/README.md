@@ -2,6 +2,8 @@
 
 Validate environment variables against `.env.example` before deployment. Catch missing or empty env vars in CI/CD before they cause production issues.
 
+**Now with monorepo support!** Scan all apps and packages in one action.
+
 ## Why Use This?
 
 > "Forgetting to update environment variable is a common problem. Especially if one developer added a new environment variable, you don't know you are missing one."
@@ -10,6 +12,7 @@ This action validates your `.env` file against `.env.example` and fails the buil
 - Required variables are missing
 - Variables defined in `.env.example` are not in `.env`
 - Variables are empty (in strict mode)
+- Potential secrets are detected in env files
 
 ## Usage
 
@@ -34,6 +37,25 @@ This action validates your `.env` file against `.env.example` and fails the buil
     required: 'DATABASE_URL,API_KEY,SECRET_KEY'
     strict: 'true'
 ```
+
+### Monorepo Mode
+
+Scan all apps and packages in a monorepo:
+
+```yaml
+- name: Validate all environments
+  uses: claude-agent-tools/envcheck@v1
+  with:
+    monorepo: 'true'
+    strict: 'true'
+```
+
+This will automatically detect and scan:
+- `apps/*`
+- `packages/*`
+- `workspaces/*`
+- `services/*`
+- `libs/*`
 
 ### Full Example
 
@@ -74,6 +96,9 @@ jobs:
 | `strict` | Fail on empty values | No | `false` |
 | `no-extra` | Fail on variables not in example | No | `false` |
 | `fail-on-warning` | Treat warnings as errors | No | `false` |
+| `monorepo` | Scan entire monorepo instead of single file | No | `false` |
+| `monorepo-path` | Root path for monorepo scan | No | `.` |
+| `detect-secrets` | Warn about potential secrets | No | `false` |
 
 ## Outputs
 
@@ -83,6 +108,9 @@ jobs:
 | `errors` | Number of errors found |
 | `warnings` | Number of warnings found |
 | `missing` | Comma-separated list of missing variables |
+| `apps-scanned` | Number of apps scanned (monorepo mode) |
+| `apps-passed` | Number of apps that passed (monorepo mode) |
+| `apps-failed` | Number of apps that failed (monorepo mode) |
 
 ## Use Cases
 
@@ -136,6 +164,50 @@ jobs:
           env-file: '.env.${{ matrix.env }}'
           example-file: '.env.example'
 ```
+
+### 4. Monorepo Validation
+
+Scan all apps and packages in a Turborepo/Nx/Lerna monorepo:
+
+```yaml
+- name: Validate all environments
+  uses: claude-agent-tools/envcheck@v1
+  with:
+    monorepo: 'true'
+    strict: 'true'
+    detect-secrets: 'true'
+```
+
+This produces output like:
+```
+=== Monorepo Environment Check ===
+✓ apps/web: passed
+✗ apps/api: failed
+  Missing variable 'REDIS_URL' (defined in example at line 5)
+○ packages/shared: skipped (No .env.example found)
+✓ packages/utils: passed
+
+=== Summary ===
+Apps scanned: 4
+Passed: 2
+Failed: 1
+Skipped: 1
+```
+
+### 5. Secret Detection
+
+Warn about accidentally committed secrets:
+
+```yaml
+- name: Check for secrets
+  uses: claude-agent-tools/envcheck@v1
+  with:
+    env-file: '.env'
+    detect-secrets: 'true'
+    fail-on-warning: 'true'
+```
+
+Detects AWS keys, GitHub tokens, Stripe keys, private keys, and more.
 
 ## Local Usage
 
