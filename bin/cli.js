@@ -1,21 +1,23 @@
 #!/usr/bin/env node
 'use strict';
 
-const { check, compare, validate, list, get, readEnvFile } = require('../src/index.js');
+const { check, compare, validate, list, get, readEnvFile, scanMonorepo, formatMonorepoResult } = require('../src/index.js');
 const path = require('path');
 const fs = require('fs');
 
-const VERSION = '1.0.0';
+const VERSION = '1.5.0';
 
 const HELP = `
 envcheck - Validate .env files
 
 USAGE
   envcheck [options] [file]
+  envcheck monorepo [directory]
   envcheck compare <env> <example>
 
 COMMANDS
   check (default)    Check .env file, optionally against .env.example
+  monorepo           Scan all apps/packages in a monorepo
   compare            Compare two env files
   list               List variables in a file
   get <key>          Get a specific variable value
@@ -26,6 +28,8 @@ OPTIONS
   --no-empty             Warn on empty values
   --no-extra             Error on variables not in example
   --strict               Treat warnings as errors
+  --secrets              Enable secret detection (warn about real secrets)
+  --verbose              Show detailed output (monorepo mode)
   -q, --quiet            Only output errors
   -j, --json             Output as JSON
   -v, --version          Show version
@@ -35,6 +39,9 @@ EXAMPLES
   envcheck                          Check .env against .env.example
   envcheck .env.production          Check specific file
   envcheck -r "API_KEY,DB_URL"      Require specific variables
+  envcheck monorepo                 Scan monorepo from current directory
+  envcheck monorepo ./my-monorepo   Scan specific directory
+  envcheck monorepo --verbose       Show all issues per app
   envcheck compare .env .env.prod   Compare two files
   envcheck list .env                List all variables
   envcheck get .env API_KEY         Get specific value
@@ -51,6 +58,8 @@ function parseArgs(args) {
     strict: false,
     quiet: false,
     json: false,
+    verbose: false,
+    detectSecrets: false,
     args: []
   };
 
@@ -78,11 +87,15 @@ function parseArgs(args) {
       result.noExtra = true;
     } else if (arg === '--strict') {
       result.strict = true;
+    } else if (arg === '--secrets') {
+      result.detectSecrets = true;
+    } else if (arg === '--verbose') {
+      result.verbose = true;
     } else if (arg === '-q' || arg === '--quiet') {
       result.quiet = true;
     } else if (arg === '-j' || arg === '--json') {
       result.json = true;
-    } else if (arg === 'compare' || arg === 'list' || arg === 'get') {
+    } else if (arg === 'compare' || arg === 'list' || arg === 'get' || arg === 'monorepo') {
       result.command = arg;
     } else if (!arg.startsWith('-')) {
       result.args.push(arg);
@@ -277,6 +290,32 @@ function runGet(opts) {
   return 0;
 }
 
+function runMonorepo(opts) {
+  const rootDir = opts.args[0] || '.';
+
+  const result = scanMonorepo(rootDir, {
+    noEmpty: opts.noEmpty,
+    noExtra: opts.noExtra,
+    strict: opts.strict,
+    detectSecrets: opts.detectSecrets,
+    checkConsistency: true
+  });
+
+  if (opts.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return result.valid ? 0 : 1;
+  }
+
+  // Use formatted output
+  const output = formatMonorepoResult(result, {
+    colors: !opts.quiet,
+    verbose: opts.verbose
+  });
+  console.log(output);
+
+  return result.valid ? 0 : 1;
+}
+
 function main() {
   const args = process.argv.slice(2);
   const opts = parseArgs(args);
@@ -286,6 +325,9 @@ function main() {
   switch (opts.command) {
     case 'check':
       exitCode = runCheck(opts);
+      break;
+    case 'monorepo':
+      exitCode = runMonorepo(opts);
       break;
     case 'compare':
       exitCode = runCompare(opts);

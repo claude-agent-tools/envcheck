@@ -683,6 +683,278 @@ function get(filePath, key) {
   return env.variables[key];
 }
 
+/**
+ * Find directories that might contain apps/packages in a monorepo
+ * @param {string} rootDir - Root directory to scan
+ * @returns {string[]} Array of directory paths
+ */
+function findMonorepoApps(rootDir) {
+  const apps = [];
+  const basePath = path.resolve(rootDir);
+
+  // Common monorepo patterns
+  const patterns = ['apps', 'packages', 'workspaces', 'services', 'libs'];
+
+  for (const pattern of patterns) {
+    const dir = path.join(basePath, pattern);
+    if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
+      // Get all subdirectories
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory() && !entry.name.startsWith('.')) {
+          apps.push(path.join(dir, entry.name));
+        }
+      }
+    }
+  }
+
+  // Also check root for .env.example (some monorepos have root-level env)
+  if (fs.existsSync(path.join(basePath, '.env.example')) ||
+      fs.existsSync(path.join(basePath, '.env'))) {
+    apps.unshift(basePath);
+  }
+
+  return apps;
+}
+
+/**
+ * Scan a monorepo for env file issues
+ * @param {string} rootDir - Root directory of monorepo
+ * @param {Object} options - Scan options
+ * @returns {Object} Monorepo scan result
+ */
+function scanMonorepo(rootDir, options = {}) {
+  const {
+    noEmpty = false,
+    noExtra = false,
+    strict = false,
+    checkConsistency = true,
+    detectSecrets = false
+  } = options;
+
+  const basePath = path.resolve(rootDir);
+  const apps = findMonorepoApps(basePath);
+
+  const result = {
+    root: basePath,
+    valid: true,
+    apps: [],
+    summary: {
+      total: apps.length,
+      passed: 0,
+      failed: 0,
+      skipped: 0,
+      errors: 0,
+      warnings: 0
+    },
+    consistency: {
+      sharedVars: {},  // Variables that appear in multiple apps
+      mismatches: []   // Variables with different types/values across apps
+    }
+  };
+
+  // Track all variables across apps for consistency checking
+  const allVars = {};  // { varName: [{ app, value, type }] }
+
+  for (const appDir of apps) {
+    const appName = path.relative(basePath, appDir) || '.';
+    const envPath = path.join(appDir, '.env');
+    const examplePath = path.join(appDir, '.env.example');
+
+    const appResult = {
+      name: appName,
+      path: appDir,
+      hasEnv: fs.existsSync(envPath),
+      hasExample: fs.existsSync(examplePath),
+      valid: true,
+      issues: [],
+      variables: []
+    };
+
+    // Skip if no example file (can't validate)
+    if (!appResult.hasExample) {
+      appResult.skipped = true;
+      appResult.reason = 'No .env.example found';
+      result.apps.push(appResult);
+      result.summary.skipped++;
+      continue;
+    }
+
+    // If no .env but has example, that's also a problem
+    if (!appResult.hasEnv) {
+      appResult.valid = false;
+      appResult.issues.push({
+        type: 'warning',
+        message: 'No .env file found (but .env.example exists)'
+      });
+    }
+
+    // Run check if both files exist
+    if (appResult.hasEnv) {
+      const checkResult = check(envPath, {
+        examplePath,
+        noEmpty,
+        noExtra,
+        strict,
+        validateTypes: true,
+        detectSecrets
+      });
+
+      appResult.valid = checkResult.valid;
+      appResult.issues = checkResult.issues;
+      appResult.variables = Object.keys(checkResult.env?.variables || {});
+
+      // Track variables for consistency check
+      if (checkConsistency && checkResult.env?.variables) {
+        const example = readEnvFile(examplePath);
+        for (const [varName, value] of Object.entries(checkResult.env.variables)) {
+          if (!allVars[varName]) {
+            allVars[varName] = [];
+          }
+          allVars[varName].push({
+            app: appName,
+            value,
+            type: example.typeHints?.[varName] || null
+          });
+        }
+      }
+    }
+
+    // Update summary
+    if (appResult.skipped) {
+      // Already counted above
+    } else if (appResult.valid) {
+      result.summary.passed++;
+    } else {
+      result.summary.failed++;
+      result.valid = false;
+    }
+
+    const errors = appResult.issues.filter(i => i.type === 'error').length;
+    const warnings = appResult.issues.filter(i => i.type === 'warning').length;
+    result.summary.errors += errors;
+    result.summary.warnings += warnings;
+
+    result.apps.push(appResult);
+  }
+
+  // Check consistency across apps
+  if (checkConsistency) {
+    for (const [varName, occurrences] of Object.entries(allVars)) {
+      if (occurrences.length > 1) {
+        result.consistency.sharedVars[varName] = occurrences.map(o => o.app);
+
+        // Check for type mismatches
+        const types = new Set(occurrences.map(o => o.type).filter(Boolean));
+        if (types.size > 1) {
+          result.consistency.mismatches.push({
+            variable: varName,
+            issue: 'type_mismatch',
+            details: occurrences.map(o => ({ app: o.app, type: o.type }))
+          });
+          result.valid = false;
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Format monorepo result for CLI output
+ * @param {Object} result - Monorepo scan result
+ * @param {Object} options - Format options
+ * @returns {string} Formatted output
+ */
+function formatMonorepoResult(result, options = {}) {
+  const { colors = true, verbose = false } = options;
+
+  const c = colors ? {
+    green: '\x1b[32m',
+    red: '\x1b[31m',
+    yellow: '\x1b[33m',
+    dim: '\x1b[2m',
+    reset: '\x1b[0m',
+    bold: '\x1b[1m'
+  } : { green: '', red: '', yellow: '', dim: '', reset: '', bold: '' };
+
+  const lines = [];
+
+  lines.push(`${c.bold}Monorepo Environment Check${c.reset}`);
+  lines.push(`Root: ${result.root}`);
+  lines.push('');
+
+  for (const app of result.apps) {
+    const icon = app.skipped ? `${c.dim}○${c.reset}` :
+                 app.valid ? `${c.green}✓${c.reset}` :
+                 `${c.red}✗${c.reset}`;
+
+    let status = '';
+    if (app.skipped) {
+      status = `${c.dim}skipped (${app.reason})${c.reset}`;
+    } else {
+      const errors = app.issues.filter(i => i.type === 'error').length;
+      const warnings = app.issues.filter(i => i.type === 'warning').length;
+
+      if (errors === 0 && warnings === 0) {
+        status = `${c.green}passed${c.reset}`;
+      } else if (errors > 0) {
+        status = `${c.red}${errors} error(s)${c.reset}`;
+        if (warnings > 0) status += `, ${c.yellow}${warnings} warning(s)${c.reset}`;
+      } else {
+        status = `${c.yellow}${warnings} warning(s)${c.reset}`;
+      }
+    }
+
+    lines.push(`${icon} ${app.name}: ${status}`);
+
+    // Show details in verbose mode
+    if (verbose && !app.skipped && app.issues.length > 0) {
+      for (const issue of app.issues) {
+        const prefix = issue.type === 'error' ? `${c.red}  ✗${c.reset}` : `${c.yellow}  !${c.reset}`;
+        lines.push(`${prefix} ${issue.message}`);
+      }
+    }
+  }
+
+  lines.push('');
+
+  // Summary
+  lines.push(`${c.bold}Summary:${c.reset} ${result.summary.total} apps scanned`);
+  if (result.summary.passed > 0) {
+    lines.push(`  ${c.green}✓${c.reset} ${result.summary.passed} passed`);
+  }
+  if (result.summary.failed > 0) {
+    lines.push(`  ${c.red}✗${c.reset} ${result.summary.failed} failed`);
+  }
+  if (result.summary.skipped > 0) {
+    lines.push(`  ${c.dim}○${c.reset} ${result.summary.skipped} skipped`);
+  }
+
+  // Consistency issues
+  if (result.consistency.mismatches.length > 0) {
+    lines.push('');
+    lines.push(`${c.yellow}Consistency Issues:${c.reset}`);
+    for (const mismatch of result.consistency.mismatches) {
+      lines.push(`  ${c.yellow}!${c.reset} ${mismatch.variable}: ${mismatch.issue}`);
+      for (const detail of mismatch.details) {
+        lines.push(`    - ${detail.app}: type=${detail.type || 'unspecified'}`);
+      }
+    }
+  }
+
+  // Final status
+  lines.push('');
+  if (result.valid) {
+    lines.push(`${c.green}✓ All checks passed${c.reset}`);
+  } else {
+    lines.push(`${c.red}✗ ${result.summary.errors} error(s), ${result.summary.warnings} warning(s)${c.reset}`);
+  }
+
+  return lines.join('\n');
+}
+
 module.exports = {
   parse: parseEnv,
   parseValue,
@@ -697,5 +969,9 @@ module.exports = {
   check,
   generate,
   list,
-  get
+  get,
+  // Monorepo support
+  findMonorepoApps,
+  scanMonorepo,
+  formatMonorepoResult
 };

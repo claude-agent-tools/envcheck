@@ -4,7 +4,7 @@ const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { parse, parseValue, readEnvFile, compare, validate, check, list, get, generate } = require('../src/index.js');
+const { parse, parseValue, readEnvFile, compare, validate, check, list, get, generate, findMonorepoApps, scanMonorepo, formatMonorepoResult } = require('../src/index.js');
 
 const TEST_DIR = path.join(__dirname, 'fixtures');
 
@@ -619,6 +619,183 @@ FOO=http://example.com`;
         const result = check(envPath, { examplePath, detectSecrets: true });
 
         assert.ok(result.issues.some(i => i.message.includes('GitHub')));
+      });
+    });
+  });
+
+  describe('monorepo support', () => {
+    // Helper to create nested test files
+    function createMonorepoStructure() {
+      // Create apps/web
+      fs.mkdirSync(path.join(TEST_DIR, 'apps', 'web'), { recursive: true });
+      fs.writeFileSync(path.join(TEST_DIR, 'apps', 'web', '.env.example'), 'API_URL=\nSECRET_KEY=');
+      fs.writeFileSync(path.join(TEST_DIR, 'apps', 'web', '.env'), 'API_URL=https://api.example.com\nSECRET_KEY=my-secret');
+
+      // Create apps/api with missing var
+      fs.mkdirSync(path.join(TEST_DIR, 'apps', 'api'), { recursive: true });
+      fs.writeFileSync(path.join(TEST_DIR, 'apps', 'api', '.env.example'), 'DATABASE_URL=\nREDIS_URL=');
+      fs.writeFileSync(path.join(TEST_DIR, 'apps', 'api', '.env'), 'DATABASE_URL=postgres://localhost/db');
+
+      // Create packages/shared (no example file - should be skipped)
+      fs.mkdirSync(path.join(TEST_DIR, 'packages', 'shared'), { recursive: true });
+      fs.writeFileSync(path.join(TEST_DIR, 'packages', 'shared', '.env'), 'DEBUG=true');
+
+      // Create packages/utils with valid files
+      fs.mkdirSync(path.join(TEST_DIR, 'packages', 'utils'), { recursive: true });
+      fs.writeFileSync(path.join(TEST_DIR, 'packages', 'utils', '.env.example'), 'LOG_LEVEL=');
+      fs.writeFileSync(path.join(TEST_DIR, 'packages', 'utils', '.env'), 'LOG_LEVEL=debug');
+    }
+
+    describe('findMonorepoApps()', () => {
+      it('should find apps in apps/ directory', () => {
+        createMonorepoStructure();
+        const apps = findMonorepoApps(TEST_DIR);
+
+        const appNames = apps.map(a => path.relative(TEST_DIR, a));
+        assert.ok(appNames.includes('apps/web'));
+        assert.ok(appNames.includes('apps/api'));
+      });
+
+      it('should find packages in packages/ directory', () => {
+        createMonorepoStructure();
+        const apps = findMonorepoApps(TEST_DIR);
+
+        const appNames = apps.map(a => path.relative(TEST_DIR, a));
+        assert.ok(appNames.includes('packages/shared'));
+        assert.ok(appNames.includes('packages/utils'));
+      });
+
+      it('should include root if it has .env.example', () => {
+        fs.writeFileSync(path.join(TEST_DIR, '.env.example'), 'ROOT_VAR=');
+        const apps = findMonorepoApps(TEST_DIR);
+
+        const rootIncluded = apps.some(a => path.resolve(a) === path.resolve(TEST_DIR));
+        assert.ok(rootIncluded);
+      });
+
+      it('should return empty array if no monorepo structure', () => {
+        // TEST_DIR exists but has no apps/, packages/, etc.
+        const apps = findMonorepoApps(TEST_DIR);
+        assert.strictEqual(apps.length, 0);
+      });
+    });
+
+    describe('scanMonorepo()', () => {
+      it('should scan all apps and packages', () => {
+        createMonorepoStructure();
+        const result = scanMonorepo(TEST_DIR);
+
+        assert.strictEqual(result.summary.total, 4);
+      });
+
+      it('should mark apps with missing .env.example as skipped', () => {
+        createMonorepoStructure();
+        const result = scanMonorepo(TEST_DIR);
+
+        const shared = result.apps.find(a => a.name === 'packages/shared');
+        assert.ok(shared);
+        assert.ok(shared.skipped);
+        assert.strictEqual(shared.reason, 'No .env.example found');
+      });
+
+      it('should detect missing variables', () => {
+        createMonorepoStructure();
+        const result = scanMonorepo(TEST_DIR);
+
+        const api = result.apps.find(a => a.name === 'apps/api');
+        assert.ok(api);
+        assert.strictEqual(api.valid, false);
+        assert.ok(api.issues.some(i => i.message.includes('REDIS_URL')));
+      });
+
+      it('should pass apps with all variables present', () => {
+        createMonorepoStructure();
+        const result = scanMonorepo(TEST_DIR);
+
+        const web = result.apps.find(a => a.name === 'apps/web');
+        assert.ok(web);
+        assert.strictEqual(web.valid, true);
+      });
+
+      it('should set valid=false if any app fails', () => {
+        createMonorepoStructure();
+        const result = scanMonorepo(TEST_DIR);
+
+        assert.strictEqual(result.valid, false);
+        assert.ok(result.summary.failed > 0);
+      });
+
+      it('should count passed, failed, and skipped correctly', () => {
+        createMonorepoStructure();
+        const result = scanMonorepo(TEST_DIR);
+
+        assert.strictEqual(result.summary.passed, 2); // web, utils
+        assert.strictEqual(result.summary.failed, 1); // api
+        assert.strictEqual(result.summary.skipped, 1); // shared
+      });
+    });
+
+    describe('consistency checks', () => {
+      it('should track shared variables across apps', () => {
+        // Create structure where API_URL appears in multiple apps
+        fs.mkdirSync(path.join(TEST_DIR, 'apps', 'web'), { recursive: true });
+        fs.writeFileSync(path.join(TEST_DIR, 'apps', 'web', '.env.example'), 'API_URL=');
+        fs.writeFileSync(path.join(TEST_DIR, 'apps', 'web', '.env'), 'API_URL=https://api.example.com');
+
+        fs.mkdirSync(path.join(TEST_DIR, 'apps', 'mobile'), { recursive: true });
+        fs.writeFileSync(path.join(TEST_DIR, 'apps', 'mobile', '.env.example'), 'API_URL=');
+        fs.writeFileSync(path.join(TEST_DIR, 'apps', 'mobile', '.env'), 'API_URL=https://api.example.com');
+
+        const result = scanMonorepo(TEST_DIR, { checkConsistency: true });
+
+        assert.ok(result.consistency.sharedVars.API_URL);
+        assert.strictEqual(result.consistency.sharedVars.API_URL.length, 2);
+      });
+
+      it('should detect type mismatches across apps', () => {
+        fs.mkdirSync(path.join(TEST_DIR, 'apps', 'web'), { recursive: true });
+        fs.writeFileSync(path.join(TEST_DIR, 'apps', 'web', '.env.example'), '# type: url\nAPI_URL=');
+        fs.writeFileSync(path.join(TEST_DIR, 'apps', 'web', '.env'), 'API_URL=https://api.example.com');
+
+        fs.mkdirSync(path.join(TEST_DIR, 'apps', 'api'), { recursive: true });
+        fs.writeFileSync(path.join(TEST_DIR, 'apps', 'api', '.env.example'), '# type: string\nAPI_URL=');
+        fs.writeFileSync(path.join(TEST_DIR, 'apps', 'api', '.env'), 'API_URL=https://api.example.com');
+
+        const result = scanMonorepo(TEST_DIR, { checkConsistency: true });
+
+        assert.ok(result.consistency.mismatches.some(m => m.variable === 'API_URL'));
+      });
+    });
+
+    describe('formatMonorepoResult()', () => {
+      it('should format output without colors when disabled', () => {
+        createMonorepoStructure();
+        const result = scanMonorepo(TEST_DIR);
+        const output = formatMonorepoResult(result, { colors: false });
+
+        assert.ok(output.includes('Monorepo Environment Check'));
+        assert.ok(output.includes('apps/web'));
+        assert.ok(output.includes('apps/api'));
+        assert.ok(!output.includes('\x1b[')); // No ANSI codes
+      });
+
+      it('should show detailed issues in verbose mode', () => {
+        createMonorepoStructure();
+        const result = scanMonorepo(TEST_DIR);
+        const output = formatMonorepoResult(result, { colors: false, verbose: true });
+
+        assert.ok(output.includes('REDIS_URL')); // The missing var should appear
+      });
+
+      it('should show summary counts', () => {
+        createMonorepoStructure();
+        const result = scanMonorepo(TEST_DIR);
+        const output = formatMonorepoResult(result, { colors: false });
+
+        assert.ok(output.includes('4 apps scanned'));
+        assert.ok(output.includes('passed'));
+        assert.ok(output.includes('failed'));
+        assert.ok(output.includes('skipped'));
       });
     });
   });

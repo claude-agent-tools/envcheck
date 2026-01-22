@@ -4,9 +4,9 @@
 [![npm downloads](https://img.shields.io/npm/dm/@claude-agent/envcheck.svg)](https://www.npmjs.com/package/@claude-agent/envcheck)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> Validate .env files, compare with .env.example, find missing or empty variables.
+> Validate .env files, compare with .env.example, find missing or empty variables. **Now with monorepo support!**
 
-Never deploy with missing environment variables again.
+Never deploy with missing environment variables again. Works across entire monorepos with a single command.
 
 **Built autonomously by [Claude](https://claude.ai)** - an AI assistant by Anthropic.
 
@@ -33,6 +33,9 @@ envcheck .env.production
 
 # Require specific variables
 envcheck -r "DATABASE_URL,API_KEY"
+
+# Scan entire monorepo
+envcheck monorepo
 
 # Compare two files
 envcheck compare .env .env.staging
@@ -99,6 +102,104 @@ envcheck list .env -j
 ```bash
 # Get a specific variable value
 envcheck get .env DATABASE_URL
+```
+
+### Monorepo Command
+
+Scan all apps and packages in a monorepo with a single command:
+
+```bash
+# Scan from current directory
+envcheck monorepo
+
+# Scan specific directory
+envcheck monorepo ./my-monorepo
+
+# With verbose output (shows all issues per app)
+envcheck monorepo --verbose
+
+# JSON output for CI/CD
+envcheck monorepo --json
+
+# Enable secret detection
+envcheck monorepo --secrets
+```
+
+## Monorepo Support
+
+envcheck can scan entire monorepos, validating environment variables across all apps and packages.
+
+### Supported Structures
+
+envcheck automatically detects these common monorepo patterns:
+
+```
+my-monorepo/
+├── apps/
+│   ├── web/          # ✓ Scanned
+│   │   ├── .env
+│   │   └── .env.example
+│   └── api/          # ✓ Scanned
+│       ├── .env
+│       └── .env.example
+├── packages/
+│   ├── shared/       # ○ Skipped (no .env.example)
+│   └── utils/        # ✓ Scanned
+│       ├── .env
+│       └── .env.example
+└── .env.example      # ✓ Root included if exists
+```
+
+Supported directories: `apps/`, `packages/`, `workspaces/`, `services/`, `libs/`
+
+### Example Output
+
+```
+$ envcheck monorepo
+
+Monorepo Environment Check
+Root: /path/to/monorepo
+
+✓ apps/web: passed
+✗ apps/api: 1 error(s)
+○ packages/shared: skipped (No .env.example found)
+✓ packages/utils: passed
+
+Summary: 4 apps scanned
+  ✓ 2 passed
+  ✗ 1 failed
+  ○ 1 skipped
+
+✗ 1 error(s), 0 warning(s)
+```
+
+### Consistency Checks
+
+envcheck can detect inconsistencies across apps:
+
+- **Shared variables** - Track which variables appear in multiple apps
+- **Type mismatches** - Detect when the same variable has different type hints in different apps
+
+```javascript
+const { scanMonorepo } = require('@claude-agent/envcheck');
+
+const result = scanMonorepo('.', { checkConsistency: true });
+
+console.log(result.consistency.sharedVars);
+// { API_URL: ['apps/web', 'apps/api'] }
+
+console.log(result.consistency.mismatches);
+// [{ variable: 'API_URL', issue: 'type_mismatch', details: [...] }]
+```
+
+### GitHub Action for Monorepos
+
+```yaml
+- name: Validate all environment files
+  uses: claude-agent-tools/envcheck@v1
+  with:
+    monorepo: 'true'
+    strict: 'true'
 ```
 
 ## API Usage
@@ -357,22 +458,24 @@ WITH_EQUALS=postgres://user:pass@host/db?opt=val
 - **Auto-detection** - Finds .env.example automatically
 - **CI-friendly** - Exit codes and JSON output
 - **Comprehensive** - Parse, validate, compare, generate
-- **Well-tested** - 72 tests covering edge cases
+- **Monorepo support** - Scan all apps/packages in one command
+- **Well-tested** - 87 tests covering edge cases
 
-## vs. dotenv-safe / envalid
+## vs. dotenv-safe / envalid / dotenv-mono
 
-| Feature | envcheck | dotenv-safe | envalid |
-|---------|----------|-------------|---------|
-| Validates presence | ✅ | ✅ | ✅ |
-| Based on .env.example | ✅ | ✅ | ❌ (schema) |
-| **Static validation** | ✅ | ❌ | ❌ |
-| **CI/CD integration** | ✅ GitHub Action | ❌ | ❌ |
-| **Pre-commit hook** | ✅ | ❌ | ❌ |
-| Type validation | ✅ (static) | ❌ | ✅ (runtime) |
-| **Secret detection** | ✅ | ❌ | ❌ |
-| Zero dependencies | ✅ | ❌ | ❌ |
+| Feature | envcheck | dotenv-safe | envalid | dotenv-mono |
+|---------|----------|-------------|---------|-------------|
+| Validates presence | ✅ | ✅ | ✅ | ❌ |
+| Based on .env.example | ✅ | ✅ | ❌ (schema) | ❌ |
+| **Static validation** | ✅ | ❌ | ❌ | ❌ |
+| **CI/CD integration** | ✅ GitHub Action | ❌ | ❌ | ❌ |
+| **Pre-commit hook** | ✅ | ❌ | ❌ | ❌ |
+| Type validation | ✅ (static) | ❌ | ✅ (runtime) | ❌ |
+| **Secret detection** | ✅ | ❌ | ❌ | ❌ |
+| **Monorepo scan** | ✅ | ❌ | ❌ | ❌ |
+| Zero dependencies | ✅ | ❌ | ❌ | ❌ |
 
-**Key difference:** envcheck validates *before* deployment (shift-left), while dotenv-safe and envalid validate at runtime when your app starts. Catch missing env vars and type errors in CI, not in production.
+**Key difference:** envcheck validates *before* deployment (shift-left), while dotenv-safe and envalid validate at runtime when your app starts. dotenv-mono helps load env vars in monorepos but doesn't validate them. envcheck is the only tool that validates across entire monorepos with a single command.
 
 ## License
 
