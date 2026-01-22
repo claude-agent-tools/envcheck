@@ -233,6 +233,62 @@ curl -o .git/hooks/pre-commit https://raw.githubusercontent.com/claude-agent-too
 chmod +x .git/hooks/pre-commit
 ```
 
+## Type Validation
+
+envcheck supports **static type validation** - validate variable formats without running your app.
+
+### Using Type Hints in .env.example
+
+Add type hints as comments above variables:
+
+```bash
+# type: url
+DATABASE_URL=postgres://localhost/mydb
+
+# @type port
+PORT=3000
+
+# type: boolean
+DEBUG=false
+
+# type: email
+ADMIN_EMAIL=admin@example.com
+```
+
+### Supported Types
+
+| Type | Description | Examples |
+|------|-------------|----------|
+| `url` | Valid URL | `https://example.com`, `postgres://host/db` |
+| `port` | Port number (1-65535) | `3000`, `8080` |
+| `boolean`/`bool` | Boolean values | `true`, `false`, `1`, `0`, `yes`, `no` |
+| `email` | Email address | `user@example.com` |
+| `number` | Any number | `42`, `3.14`, `-10` |
+| `integer`/`int` | Whole numbers | `42`, `-10` |
+| `json` | Valid JSON | `{"key":"value"}`, `[1,2,3]` |
+| `uuid` | UUID format | `550e8400-e29b-41d4-a716-446655440000` |
+| `string`/`str` | Any string (no validation) | anything |
+
+### API Usage with Types
+
+```javascript
+const { check, validate } = require('@claude-agent/envcheck');
+
+// Explicit type validation
+const result = validate('.env', {
+  types: {
+    DATABASE_URL: 'url',
+    PORT: 'port',
+    DEBUG: 'boolean'
+  }
+});
+
+// Types from example file are used automatically
+const result2 = check('.env', {
+  examplePath: '.env.example'  // Type hints in example are used
+});
+```
+
 ## .env File Format
 
 Supports standard .env syntax:
@@ -263,10 +319,10 @@ WITH_EQUALS=postgres://user:pass@host/db?opt=val
 | **Static validation** | ✅ | ❌ | ❌ |
 | **CI/CD integration** | ✅ GitHub Action | ❌ | ❌ |
 | **Pre-commit hook** | ✅ | ❌ | ❌ |
-| Type validation | ❌ | ❌ | ✅ |
+| Type validation | ✅ (static) | ❌ | ✅ (runtime) |
 | Zero dependencies | ✅ | ❌ | ❌ |
 
-**Key difference:** envcheck validates *before* deployment (shift-left), while dotenv-safe and envalid validate at runtime when your app starts. Catch missing env vars in CI, not in production.
+**Key difference:** envcheck validates *before* deployment (shift-left), while dotenv-safe and envalid validate at runtime when your app starts. Catch missing env vars and type errors in CI, not in production.
 
 ## License
 

@@ -393,4 +393,146 @@ describe('envcheck', () => {
       assert.ok('export FOO' in result.variables || 'FOO' in result.variables);
     });
   });
+
+  describe('type validation', () => {
+    const { validateType, typeValidators } = require('../src/index.js');
+
+    describe('validateType()', () => {
+      it('should validate URL type', () => {
+        assert.strictEqual(validateType('https://example.com', 'url').valid, true);
+        assert.strictEqual(validateType('http://localhost:3000', 'url').valid, true);
+        assert.strictEqual(validateType('postgres://user:pass@host/db', 'url').valid, true);
+        assert.strictEqual(validateType('not-a-url', 'url').valid, false);
+        assert.strictEqual(validateType('', 'url').valid, true); // Empty is valid (missing handled elsewhere)
+      });
+
+      it('should validate port type', () => {
+        assert.strictEqual(validateType('3000', 'port').valid, true);
+        assert.strictEqual(validateType('80', 'port').valid, true);
+        assert.strictEqual(validateType('65535', 'port').valid, true);
+        assert.strictEqual(validateType('0', 'port').valid, false);
+        assert.strictEqual(validateType('65536', 'port').valid, false);
+        assert.strictEqual(validateType('abc', 'port').valid, false);
+        assert.strictEqual(validateType('3000.5', 'port').valid, false);
+      });
+
+      it('should validate boolean type', () => {
+        assert.strictEqual(validateType('true', 'boolean').valid, true);
+        assert.strictEqual(validateType('false', 'boolean').valid, true);
+        assert.strictEqual(validateType('1', 'boolean').valid, true);
+        assert.strictEqual(validateType('0', 'boolean').valid, true);
+        assert.strictEqual(validateType('yes', 'boolean').valid, true);
+        assert.strictEqual(validateType('no', 'boolean').valid, true);
+        assert.strictEqual(validateType('TRUE', 'boolean').valid, true);
+        assert.strictEqual(validateType('maybe', 'boolean').valid, false);
+        assert.strictEqual(validateType('', 'bool').valid, true);
+      });
+
+      it('should validate email type', () => {
+        assert.strictEqual(validateType('user@example.com', 'email').valid, true);
+        assert.strictEqual(validateType('not-an-email', 'email').valid, false);
+        assert.strictEqual(validateType('missing@domain', 'email').valid, false);
+      });
+
+      it('should validate number type', () => {
+        assert.strictEqual(validateType('42', 'number').valid, true);
+        assert.strictEqual(validateType('3.14', 'number').valid, true);
+        assert.strictEqual(validateType('-10', 'number').valid, true);
+        assert.strictEqual(validateType('abc', 'number').valid, false);
+      });
+
+      it('should validate integer type', () => {
+        assert.strictEqual(validateType('42', 'integer').valid, true);
+        assert.strictEqual(validateType('-10', 'integer').valid, true);
+        assert.strictEqual(validateType('3.14', 'integer').valid, false);
+        assert.strictEqual(validateType('3.14', 'int').valid, false);
+      });
+
+      it('should validate json type', () => {
+        assert.strictEqual(validateType('{"key":"value"}', 'json').valid, true);
+        assert.strictEqual(validateType('[1,2,3]', 'json').valid, true);
+        assert.strictEqual(validateType('not json', 'json').valid, false);
+      });
+
+      it('should validate uuid type', () => {
+        assert.strictEqual(validateType('550e8400-e29b-41d4-a716-446655440000', 'uuid').valid, true);
+        assert.strictEqual(validateType('not-a-uuid', 'uuid').valid, false);
+      });
+
+      it('should handle unknown types gracefully', () => {
+        assert.strictEqual(validateType('anything', 'unknown_type').valid, true);
+      });
+    });
+
+    describe('parse() with type hints', () => {
+      it('should extract type hints from comments', () => {
+        const content = `
+# type: url
+DATABASE_URL=postgres://localhost/db
+# @type port
+PORT=3000
+NO_TYPE=value
+`;
+        const result = parse(content);
+
+        assert.strictEqual(result.typeHints.DATABASE_URL, 'url');
+        assert.strictEqual(result.typeHints.PORT, 'port');
+        assert.strictEqual(result.typeHints.NO_TYPE, undefined);
+      });
+
+      it('should handle case-insensitive type hints', () => {
+        const content = `# TYPE: URL
+FOO=http://example.com`;
+        const result = parse(content);
+
+        assert.strictEqual(result.typeHints.FOO, 'url');
+      });
+    });
+
+    describe('validate() with types', () => {
+      it('should validate types from options', () => {
+        const filePath = createTestFile('.env', 'PORT=abc\nURL=http://example.com');
+        const result = validate(filePath, {
+          types: { PORT: 'port', URL: 'url' }
+        });
+
+        assert.strictEqual(result.valid, false);
+        assert.ok(result.issues.some(i => i.message.includes('PORT')));
+      });
+
+      it('should pass valid types', () => {
+        const filePath = createTestFile('.env', 'PORT=3000\nURL=http://example.com');
+        const result = validate(filePath, {
+          types: { PORT: 'port', URL: 'url' }
+        });
+
+        assert.strictEqual(result.valid, true);
+      });
+    });
+
+    describe('check() with type hints from example', () => {
+      it('should use type hints from example file', () => {
+        const envPath = createTestFile('.env', 'PORT=abc');
+        const examplePath = createTestFile('.env.example', '# type: port\nPORT=3000');
+
+        const result = check(envPath, { examplePath });
+
+        assert.strictEqual(result.valid, false);
+        assert.ok(result.issues.some(i => i.message.includes('port')));
+      });
+
+      it('should override example hints with explicit types', () => {
+        const envPath = createTestFile('.env', 'FOO=abc');
+        const examplePath = createTestFile('.env.example', '# type: port\nFOO=');
+
+        // Override port hint with string (no validation)
+        const result = check(envPath, {
+          examplePath,
+          types: { FOO: 'string' }
+        });
+
+        assert.strictEqual(result.valid, true);
+      });
+    });
+  });
 });

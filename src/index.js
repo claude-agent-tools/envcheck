@@ -4,6 +4,90 @@ const fs = require('fs');
 const path = require('path');
 
 /**
+ * Type validators for environment variables
+ */
+const typeValidators = {
+  url: (value) => {
+    if (!value) return { valid: true };
+    try {
+      new URL(value);
+      return { valid: true };
+    } catch {
+      return { valid: false, message: 'must be a valid URL' };
+    }
+  },
+
+  port: (value) => {
+    if (!value) return { valid: true };
+    const num = parseInt(value, 10);
+    if (isNaN(num) || num < 1 || num > 65535 || String(num) !== value) {
+      return { valid: false, message: 'must be a valid port number (1-65535)' };
+    }
+    return { valid: true };
+  },
+
+  boolean: (value) => {
+    if (!value) return { valid: true };
+    const lower = value.toLowerCase();
+    const valid = ['true', 'false', '1', '0', 'yes', 'no', 'on', 'off'].includes(lower);
+    if (!valid) {
+      return { valid: false, message: 'must be a boolean (true/false/1/0/yes/no)' };
+    }
+    return { valid: true };
+  },
+  bool: (value) => typeValidators.boolean(value),
+
+  email: (value) => {
+    if (!value) return { valid: true };
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(value)) {
+      return { valid: false, message: 'must be a valid email address' };
+    }
+    return { valid: true };
+  },
+
+  number: (value) => {
+    if (!value) return { valid: true };
+    if (isNaN(parseFloat(value))) {
+      return { valid: false, message: 'must be a number' };
+    }
+    return { valid: true };
+  },
+
+  integer: (value) => {
+    if (!value) return { valid: true };
+    const num = parseInt(value, 10);
+    if (isNaN(num) || String(num) !== value) {
+      return { valid: false, message: 'must be an integer' };
+    }
+    return { valid: true };
+  },
+  int: (value) => typeValidators.integer(value),
+
+  string: () => ({ valid: true }),
+  str: () => ({ valid: true }),
+
+  json: (value) => {
+    if (!value) return { valid: true };
+    try {
+      JSON.parse(value);
+      return { valid: true };
+    } catch {
+      return { valid: false, message: 'must be valid JSON' };
+    }
+  },
+
+  uuid: (value) => {
+    if (!value) return { valid: true };
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(value)) {
+      return { valid: false, message: 'must be a valid UUID' };
+    }
+    return { valid: true };
+  }
+};
+
+/**
  * Parse a .env file into an object
  * @param {string} content - File content
  * @returns {Object} Parsed variables
@@ -13,18 +97,30 @@ function parseEnv(content) {
     variables: {},
     errors: [],
     warnings: [],
-    lineInfo: {}
+    lineInfo: {},
+    typeHints: {}  // NEW: Store type hints from comments
   };
 
   const lines = content.split('\n');
+  let pendingTypeHint = null;
 
   for (let i = 0; i < lines.length; i++) {
     const lineNum = i + 1;
     const line = lines[i];
     const trimmed = line.trim();
 
-    // Skip empty lines and comments
-    if (!trimmed || trimmed.startsWith('#')) {
+    // Check for type hint in comments: # type: url OR # @type url
+    if (trimmed.startsWith('#')) {
+      const typeMatch = trimmed.match(/^#\s*(?:type:|@type)\s*(\w+)/i);
+      if (typeMatch) {
+        pendingTypeHint = typeMatch[1].toLowerCase();
+      }
+      continue;
+    }
+
+    // Skip empty lines
+    if (!trimmed) {
+      pendingTypeHint = null;
       continue;
     }
 
@@ -74,6 +170,12 @@ function parseEnv(content) {
 
     result.variables[key] = value;
     result.lineInfo[key] = lineNum;
+
+    // Store type hint if present
+    if (pendingTypeHint) {
+      result.typeHints[key] = pendingTypeHint;
+      pendingTypeHint = null;
+    }
   }
 
   return result;
@@ -129,7 +231,8 @@ function readEnvFile(filePath) {
       variables: {},
       errors: [{ message: `File not found: ${absolutePath}` }],
       warnings: [],
-      lineInfo: {}
+      lineInfo: {},
+      typeHints: {}
     };
   }
 
@@ -203,13 +306,27 @@ function compare(envPath, examplePath) {
 }
 
 /**
+ * Validate a value against a type
+ * @param {string} value - Value to validate
+ * @param {string} type - Type name
+ * @returns {Object} Validation result {valid, message}
+ */
+function validateType(value, type) {
+  const validator = typeValidators[type.toLowerCase()];
+  if (!validator) {
+    return { valid: true, message: `Unknown type '${type}'` };
+  }
+  return validator(value);
+}
+
+/**
  * Validate an env file
  * @param {string} filePath - Path to .env file
  * @param {Object} options - Validation options
  * @returns {Object} Validation result
  */
 function validate(filePath, options = {}) {
-  const { required = [], noEmpty = false } = options;
+  const { required = [], noEmpty = false, types = {}, validateTypes = false } = options;
 
   const env = readEnvFile(filePath);
 
@@ -271,6 +388,24 @@ function validate(filePath, options = {}) {
     }
   }
 
+  // Type validation (from options.types or env.typeHints)
+  if (validateTypes || Object.keys(types).length > 0) {
+    const allTypes = { ...env.typeHints, ...types }; // options.types override hints
+    for (const [key, typeName] of Object.entries(allTypes)) {
+      if (key in env.variables && env.variables[key] !== '') {
+        const typeResult = validateType(env.variables[key], typeName);
+        if (!typeResult.valid) {
+          result.valid = false;
+          result.issues.push({
+            type: 'error',
+            line: env.lineInfo[key],
+            message: `Variable '${key}' ${typeResult.message} (got: ${env.variables[key]})`
+          });
+        }
+      }
+    }
+  }
+
   // Add warnings
   for (const warning of env.warnings) {
     result.issues.push({
@@ -295,7 +430,9 @@ function check(envPath, options = {}) {
     required = [],
     noEmpty = false,
     noExtra = false,
-    strict = false
+    strict = false,
+    types = {},
+    validateTypes = false
   } = options;
 
   const result = {
@@ -307,8 +444,25 @@ function check(envPath, options = {}) {
     }
   };
 
-  // First validate the env file
-  const validation = validate(envPath, { required, noEmpty });
+  // Get type hints from example file if provided
+  let exampleTypeHints = {};
+  if (examplePath) {
+    const example = readEnvFile(examplePath);
+    if (example.exists) {
+      exampleTypeHints = example.typeHints || {};
+    }
+  }
+
+  // Merge type hints: example hints < explicit types
+  const mergedTypes = { ...exampleTypeHints, ...types };
+
+  // First validate the env file (including type validation)
+  const validation = validate(envPath, {
+    required,
+    noEmpty,
+    types: mergedTypes,
+    validateTypes: validateTypes || Object.keys(mergedTypes).length > 0
+  });
 
   if (!validation.valid) {
     result.valid = false;
@@ -417,6 +571,8 @@ module.exports = {
   readEnvFile,
   compare,
   validate,
+  validateType,
+  typeValidators,
   check,
   generate,
   list,
