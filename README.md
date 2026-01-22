@@ -269,6 +269,55 @@ ADMIN_EMAIL=admin@example.com
 | `uuid` | UUID format | `550e8400-e29b-41d4-a716-446655440000` |
 | `string`/`str` | Any string (no validation) | anything |
 
+## Secret Detection
+
+envcheck can warn you if your `.env` file contains values that look like real secrets:
+
+```javascript
+const result = check('.env', {
+  examplePath: '.env.example',
+  detectSecrets: true  // Warns about potential secrets
+});
+```
+
+### Detected Secret Patterns
+
+- AWS Access Keys (`AKIA...`)
+- GitHub Tokens (`ghp_...`, `gho_...`, etc.)
+- Stripe Keys (`sk_live_...`, `rk_live_...`)
+- Private Keys (`-----BEGIN PRIVATE KEY-----`)
+- Slack Tokens (`xox...`)
+- Twilio Credentials
+- SendGrid API Keys
+- Google API Keys
+- High-entropy hex strings (with sensitive key names)
+
+### Placeholder Detection
+
+envcheck won't warn about obvious placeholders like:
+- `your-api-key`, `my-secret`
+- `changeme`, `placeholder`
+- `xxx`, `...`
+- `example`, `test`, `dummy`
+
+### API Usage with Secrets
+
+```javascript
+const { check, validate, detectSecret } = require('@claude-agent/envcheck');
+
+// Enable secret detection
+const result = check('.env', {
+  examplePath: '.env.example',
+  detectSecrets: true  // Warns about potential secrets
+});
+
+// Check a single value
+const secret = detectSecret('API_KEY', 'sk_live_abc123...');
+if (secret) {
+  console.log(`Warning: ${secret.description} detected`);
+}
+```
+
 ### API Usage with Types
 
 ```javascript
@@ -308,7 +357,7 @@ WITH_EQUALS=postgres://user:pass@host/db?opt=val
 - **Auto-detection** - Finds .env.example automatically
 - **CI-friendly** - Exit codes and JSON output
 - **Comprehensive** - Parse, validate, compare, generate
-- **Well-tested** - 46 tests covering edge cases
+- **Well-tested** - 72 tests covering edge cases
 
 ## vs. dotenv-safe / envalid
 
@@ -320,6 +369,7 @@ WITH_EQUALS=postgres://user:pass@host/db?opt=val
 | **CI/CD integration** | ✅ GitHub Action | ❌ | ❌ |
 | **Pre-commit hook** | ✅ | ❌ | ❌ |
 | Type validation | ✅ (static) | ❌ | ✅ (runtime) |
+| **Secret detection** | ✅ | ❌ | ❌ |
 | Zero dependencies | ✅ | ❌ | ❌ |
 
 **Key difference:** envcheck validates *before* deployment (shift-left), while dotenv-safe and envalid validate at runtime when your app starts. Catch missing env vars and type errors in CI, not in production.

@@ -88,6 +88,108 @@ const typeValidators = {
 };
 
 /**
+ * Secret detection patterns
+ * Each pattern has: regex, description, and optional keyPattern (for key-specific checks)
+ */
+const secretPatterns = [
+  // AWS
+  { regex: /^AKIA[0-9A-Z]{16}$/, description: 'AWS Access Key ID' },
+  { regex: /^[A-Za-z0-9/+=]{40}$/, description: 'AWS Secret Access Key', keyPattern: /aws.*secret|secret.*key/i },
+
+  // Private keys
+  { regex: /-----BEGIN (?:RSA |DSA |EC |OPENSSH |PGP )?PRIVATE KEY-----/, description: 'Private key' },
+  { regex: /-----BEGIN CERTIFICATE-----/, description: 'Certificate' },
+
+  // GitHub
+  { regex: /^ghp_[a-zA-Z0-9]{36}$/, description: 'GitHub Personal Access Token' },
+  { regex: /^gho_[a-zA-Z0-9]{36}$/, description: 'GitHub OAuth Access Token' },
+  { regex: /^ghu_[a-zA-Z0-9]{36}$/, description: 'GitHub User-to-Server Token' },
+  { regex: /^ghs_[a-zA-Z0-9]{36}$/, description: 'GitHub Server-to-Server Token' },
+  { regex: /^ghr_[a-zA-Z0-9]{36}$/, description: 'GitHub Refresh Token' },
+
+  // Slack
+  { regex: /^xox[baprs]-[0-9]{10,}-[0-9]{10,}-[a-zA-Z0-9]{24}$/, description: 'Slack Token' },
+
+  // Stripe
+  { regex: /^sk_live_[a-zA-Z0-9]{24,}$/, description: 'Stripe Live Secret Key' },
+  { regex: /^rk_live_[a-zA-Z0-9]{24,}$/, description: 'Stripe Live Restricted Key' },
+
+  // Twilio
+  { regex: /^AC[a-f0-9]{32}$/, description: 'Twilio Account SID' },
+  { regex: /^SK[a-f0-9]{32}$/, description: 'Twilio API Key' },
+
+  // SendGrid
+  { regex: /^SG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}$/, description: 'SendGrid API Key' },
+
+  // Google
+  { regex: /^AIza[0-9A-Za-z_-]{35}$/, description: 'Google API Key' },
+
+  // Generic high-entropy (likely real secrets)
+  { regex: /^[a-f0-9]{32}$/, description: 'Hex string (32 chars)', keyPattern: /api.*key|secret|token|password/i },
+  { regex: /^[a-f0-9]{64}$/, description: 'Hex string (64 chars)', keyPattern: /api.*key|secret|token|password/i },
+];
+
+/**
+ * Placeholder patterns that are NOT secrets
+ */
+const placeholderPatterns = [
+  /^your[-_]?/i,
+  /^my[-_]?/i,
+  /^xxx+$/i,
+  /^placeholder/i,
+  /^example/i,
+  /^test[-_]?/i,
+  /^dummy/i,
+  /^fake/i,
+  /^sample/i,
+  /^changeme/i,
+  /^replace[-_]?/i,
+  /^insert[-_]?/i,
+  /^todo/i,
+  /^\*+$/,
+  /^\.\.\.$/,
+];
+
+/**
+ * Check if a value looks like a placeholder
+ * @param {string} value - Value to check
+ * @returns {boolean} True if it looks like a placeholder
+ */
+function isPlaceholder(value) {
+  if (!value || value.length < 3) return true;
+  return placeholderPatterns.some(pattern => pattern.test(value));
+}
+
+/**
+ * Detect potential secrets in environment variables
+ * @param {string} key - Variable name
+ * @param {string} value - Variable value
+ * @returns {Object|null} Detection result or null if no secret detected
+ */
+function detectSecret(key, value) {
+  if (!value || isPlaceholder(value)) {
+    return null;
+  }
+
+  for (const pattern of secretPatterns) {
+    // If pattern has keyPattern, only check if key matches
+    if (pattern.keyPattern && !pattern.keyPattern.test(key)) {
+      continue;
+    }
+
+    if (pattern.regex.test(value)) {
+      return {
+        detected: true,
+        description: pattern.description,
+        message: `may contain a real ${pattern.description}`
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
  * Parse a .env file into an object
  * @param {string} content - File content
  * @returns {Object} Parsed variables
@@ -326,7 +428,7 @@ function validateType(value, type) {
  * @returns {Object} Validation result
  */
 function validate(filePath, options = {}) {
-  const { required = [], noEmpty = false, types = {}, validateTypes = false } = options;
+  const { required = [], noEmpty = false, types = {}, validateTypes = false, detectSecrets = false } = options;
 
   const env = readEnvFile(filePath);
 
@@ -406,6 +508,20 @@ function validate(filePath, options = {}) {
     }
   }
 
+  // Secret detection
+  if (detectSecrets) {
+    for (const [key, value] of Object.entries(env.variables)) {
+      const secretResult = detectSecret(key, value);
+      if (secretResult) {
+        result.issues.push({
+          type: 'warning',
+          line: env.lineInfo[key],
+          message: `Variable '${key}' ${secretResult.message}`
+        });
+      }
+    }
+  }
+
   // Add warnings
   for (const warning of env.warnings) {
     result.issues.push({
@@ -432,7 +548,8 @@ function check(envPath, options = {}) {
     noExtra = false,
     strict = false,
     types = {},
-    validateTypes = false
+    validateTypes = false,
+    detectSecrets = false
   } = options;
 
   const result = {
@@ -456,12 +573,13 @@ function check(envPath, options = {}) {
   // Merge type hints: example hints < explicit types
   const mergedTypes = { ...exampleTypeHints, ...types };
 
-  // First validate the env file (including type validation)
+  // First validate the env file (including type validation and secret detection)
   const validation = validate(envPath, {
     required,
     noEmpty,
     types: mergedTypes,
-    validateTypes: validateTypes || Object.keys(mergedTypes).length > 0
+    validateTypes: validateTypes || Object.keys(mergedTypes).length > 0,
+    detectSecrets
   });
 
   if (!validation.valid) {
@@ -573,6 +691,9 @@ module.exports = {
   validate,
   validateType,
   typeValidators,
+  detectSecret,
+  secretPatterns,
+  isPlaceholder,
   check,
   generate,
   list,

@@ -1,6 +1,6 @@
 {
   "name": "@claude-agent/envcheck",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Validate .env files, compare with .env.example, find missing or empty variables",
   "main": "src/index.js",
   "bin": {
@@ -20,7 +20,9 @@
     "github-action",
     "ci-cd",
     "pre-commit",
-    "git-hooks"
+    "git-hooks",
+    "secrets",
+    "security"
   ],
   "author": "Claude Agent <claude-agent@agentmail.to>",
   "license": "MIT",

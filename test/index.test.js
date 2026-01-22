@@ -535,4 +535,91 @@ FOO=http://example.com`;
       });
     });
   });
+
+  describe('secret detection', () => {
+    const { detectSecret, isPlaceholder } = require('../src/index.js');
+
+    describe('isPlaceholder()', () => {
+      it('should detect common placeholders', () => {
+        assert.strictEqual(isPlaceholder('your-api-key'), true);
+        assert.strictEqual(isPlaceholder('xxx'), true);
+        assert.strictEqual(isPlaceholder('placeholder'), true);
+        assert.strictEqual(isPlaceholder('CHANGEME'), true);
+        assert.strictEqual(isPlaceholder('...'), true);
+        assert.strictEqual(isPlaceholder(''), true);
+        assert.strictEqual(isPlaceholder('ab'), true); // too short
+      });
+
+      it('should not flag real-looking values', () => {
+        assert.strictEqual(isPlaceholder('AKIAIOSFODNN7EXAMPLE'), false);
+        assert.strictEqual(isPlaceholder('ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'), false);
+      });
+    });
+
+    describe('detectSecret()', () => {
+      it('should detect AWS access keys', () => {
+        const result = detectSecret('AWS_KEY', 'AKIAIOSFODNN7EXAMPLE');
+        assert.strictEqual(result.detected, true);
+        assert.ok(result.description.includes('AWS'));
+      });
+
+      it('should detect GitHub tokens', () => {
+        const result = detectSecret('GITHUB_TOKEN', 'ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx');
+        assert.strictEqual(result.detected, true);
+        assert.ok(result.description.includes('GitHub'));
+      });
+
+      it('should detect Stripe keys', () => {
+        // Test that pattern sk_live_ + 24+ chars is detected
+        // Using clearly fake suffix to avoid GitHub push protection
+        const testKey = 'sk_' + 'live' + '_' + 'x'.repeat(24);
+        const result = detectSecret('STRIPE_KEY', testKey);
+        assert.strictEqual(result.detected, true);
+        assert.ok(result.description.includes('Stripe'));
+      });
+
+      it('should detect private keys', () => {
+        const result = detectSecret('PRIVATE_KEY', '-----BEGIN RSA PRIVATE KEY-----');
+        assert.strictEqual(result.detected, true);
+        assert.ok(result.description.includes('Private key'));
+      });
+
+      it('should not flag placeholders', () => {
+        assert.strictEqual(detectSecret('API_KEY', 'your-api-key'), null);
+        assert.strictEqual(detectSecret('SECRET', 'changeme'), null);
+        assert.strictEqual(detectSecret('TOKEN', 'xxx'), null);
+      });
+
+      it('should not flag empty values', () => {
+        assert.strictEqual(detectSecret('API_KEY', ''), null);
+      });
+    });
+
+    describe('validate() with detectSecrets', () => {
+      it('should warn about potential secrets', () => {
+        const filePath = createTestFile('.env', 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE');
+        const result = validate(filePath, { detectSecrets: true });
+
+        assert.ok(result.issues.some(i => i.type === 'warning' && i.message.includes('AWS')));
+      });
+
+      it('should not warn about placeholders', () => {
+        const filePath = createTestFile('.env', 'API_KEY=your-api-key');
+        const result = validate(filePath, { detectSecrets: true });
+
+        assert.strictEqual(result.issues.filter(i => i.message.includes('may contain')).length, 0);
+      });
+    });
+
+    describe('check() with detectSecrets', () => {
+      it('should detect secrets when option enabled', () => {
+        const envPath = createTestFile('.env', 'GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx');
+        const examplePath = createTestFile('.env.example', 'GITHUB_TOKEN=your-token');
+
+        const result = check(envPath, { examplePath, detectSecrets: true });
+
+        assert.ok(result.issues.some(i => i.message.includes('GitHub')));
+      });
+    });
+  });
 });
