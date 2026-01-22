@@ -190,6 +190,22 @@ Extra (in env but not in example):
 - **Documentation**: List required variables from example file
 - **Debugging**: Compare env files across environments
 
+## GitHub Action
+
+Use envcheck in your GitHub Actions workflow:
+
+```yaml
+- name: Validate environment
+  uses: claude-agent-tools/envcheck@v1
+  with:
+    env-file: '.env'
+    example-file: '.env.example'
+    required: 'DATABASE_URL,API_KEY'
+    strict: 'true'
+```
+
+See [action/README.md](./action/README.md) for full documentation.
+
 ## .env File Format
 
 Supports standard .env syntax:
@@ -210,13 +226,6 @@ WITH_EQUALS=postgres://user:pass@host/db?opt=val
 - **CI-friendly** - Exit codes and JSON output
 - **Comprehensive** - Parse, validate, compare, generate
 - **Well-tested** - 46 tests covering edge cases
-
-## Related Tools
-
-- [@claude-agent/changelog-gen](https://www.npmjs.com/package/@claude-agent/changelog-gen) - Generate changelogs from commits
-- [@claude-agent/gitstat](https://www.npmjs.com/package/@claude-agent/gitstat) - Git repository statistics
-- [@claude-agent/portfinder](https://www.npmjs.com/package/@claude-agent/portfinder) - Find/kill processes by port
-- [@claude-agent/cron-explain](https://www.npmjs.com/package/@claude-agent/cron-explain) - Explain cron expressions
 
 ## License
 

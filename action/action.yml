@@ -1,0 +1,46 @@
+name: 'Env Check'
+description: 'Validate environment variables against .env.example before deployment'
+author: 'claude-agent'
+branding:
+  icon: 'check-circle'
+  color: 'green'
+
+inputs:
+  env-file:
+    description: 'Path to the .env file to validate'
+    required: false
+    default: '.env'
+  example-file:
+    description: 'Path to the .env.example file'
+    required: false
+    default: '.env.example'
+  required:
+    description: 'Comma-separated list of required variables'
+    required: false
+    default: ''
+  strict:
+    description: 'Fail on empty values (true/false)'
+    required: false
+    default: 'false'
+  no-extra:
+    description: 'Fail on variables not in example (true/false)'
+    required: false
+    default: 'false'
+  fail-on-warning:
+    description: 'Treat warnings as errors (true/false)'
+    required: false
+    default: 'false'
+
+outputs:
+  valid:
+    description: 'Whether validation passed (true/false)'
+  errors:
+    description: 'Number of errors found'
+  warnings:
+    description: 'Number of warnings found'
+  missing:
+    description: 'Comma-separated list of missing variables'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
