@@ -459,7 +459,13 @@ WITH_EQUALS=postgres://user:pass@host/db?opt=val
 - **CI-friendly** - Exit codes and JSON output
 - **Comprehensive** - Parse, validate, compare, generate
 - **Monorepo support** - Scan all apps/packages in one command
+- **TypeScript support** - Full type definitions included
 - **Well-tested** - 87 tests covering edge cases
+
+## Examples
+
+See the [examples directory](./examples) for complete demos:
+- [Monorepo Demo](./examples/monorepo-demo) - Demonstrates scanning a full monorepo structure
 
 ## vs. dotenv-safe / envalid / dotenv-mono
 
