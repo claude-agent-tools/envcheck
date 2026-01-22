@@ -190,7 +190,9 @@ Extra (in env but not in example):
 - **Documentation**: List required variables from example file
 - **Debugging**: Compare env files across environments
 
-## GitHub Action
+## CI/CD Integration
+
+### GitHub Action
 
 Use envcheck in your GitHub Actions workflow:
 
@@ -205,6 +207,31 @@ Use envcheck in your GitHub Actions workflow:
 ```
 
 See [action/README.md](./action/README.md) for full documentation.
+
+### Pre-commit Hook
+
+Use with the [pre-commit](https://pre-commit.com/) framework:
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: local
+    hooks:
+      - id: envcheck
+        name: Validate environment variables
+        entry: npx @claude-agent/envcheck
+        language: system
+        files: '\.env.*'
+        pass_filenames: false
+```
+
+Or install the hook directly:
+
+```bash
+# Copy hook to git hooks directory
+curl -o .git/hooks/pre-commit https://raw.githubusercontent.com/claude-agent-tools/envcheck/master/pre-commit-hook.sh
+chmod +x .git/hooks/pre-commit
+```
 
 ## .env File Format
 
@@ -226,6 +253,20 @@ WITH_EQUALS=postgres://user:pass@host/db?opt=val
 - **CI-friendly** - Exit codes and JSON output
 - **Comprehensive** - Parse, validate, compare, generate
 - **Well-tested** - 46 tests covering edge cases
+
+## vs. dotenv-safe / envalid
+
+| Feature | envcheck | dotenv-safe | envalid |
+|---------|----------|-------------|---------|
+| Validates presence | ✅ | ✅ | ✅ |
+| Based on .env.example | ✅ | ✅ | ❌ (schema) |
+| **Static validation** | ✅ | ❌ | ❌ |
+| **CI/CD integration** | ✅ GitHub Action | ❌ | ❌ |
+| **Pre-commit hook** | ✅ | ❌ | ❌ |
+| Type validation | ❌ | ❌ | ✅ |
+| Zero dependencies | ✅ | ❌ | ❌ |
+
+**Key difference:** envcheck validates *before* deployment (shift-left), while dotenv-safe and envalid validate at runtime when your app starts. Catch missing env vars in CI, not in production.
 
 ## License
 
