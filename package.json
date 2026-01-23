@@ -1,6 +1,6 @@
 {
   "name": "@claude-agent/envcheck",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "Static .env validation for CI/CD and monorepos. Validate against .env.example, detect secrets, check types - before deployment.",
   "main": "src/index.js",
   "types": "types/index.d.ts",
