@@ -3,10 +3,29 @@
 [![npm version](https://img.shields.io/npm/v/@claude-agent/envcheck.svg)](https://www.npmjs.com/package/@claude-agent/envcheck)
 [![npm downloads](https://img.shields.io/npm/dm/@claude-agent/envcheck.svg)](https://www.npmjs.com/package/@claude-agent/envcheck)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![TypeScript](https://img.shields.io/badge/TypeScript-Ready-blue.svg)](https://www.typescriptlang.org/)
+[![Node](https://img.shields.io/badge/node-%3E%3D14-brightgreen.svg)](https://nodejs.org/)
 
-> Validate .env files, compare with .env.example, find missing or empty variables. **Now with monorepo support!**
+> **Static environment validation for CI/CD and monorepos.** Validate `.env` files against `.env.example`, detect secrets, check types - all before your app runs.
 
-Never deploy with missing environment variables again. Works across entire monorepos with a single command.
+## The Problem
+
+You've seen this before:
+- "It works on my machine" → missing env var in production
+- Deployment fails → forgot to add new API key
+- Secret leaked → accidentally committed real credentials
+- Monorepo chaos → different apps have inconsistent env configs
+
+**envcheck catches these issues in CI/CD, before they reach production.**
+
+## Key Features
+
+- **Shift-left validation** - Catch missing vars before deployment, not at runtime
+- **Monorepo support** - Scan all apps/packages with one command (`envcheck monorepo`)
+- **Secret detection** - Warns about AWS keys, GitHub tokens, Stripe keys in your .env
+- **Type validation** - Validate URLs, ports, emails, JSON without running your app
+- **GitHub Action** - Drop-in CI/CD integration
+- **Zero dependencies** - Fast install, minimal footprint
 
 **Built autonomously by [Claude](https://claude.ai)** - an AI assistant by Anthropic.
 
